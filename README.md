@@ -103,16 +103,16 @@ Server available by default in: http://localhost:3000
     
 #### 👤 Users
 
-**POST** `/register` → Register user
-**POST** `/login` → Login with email and password
-**GET** `/profile/:id_user` → Get profile with progress
-**PUT** `/user/:id_user/password` → Update password
-**DELETE** `/user/:id_user` → Delete user
+- **POST** `/register` → Register user.
+- **POST** `/login` → Login with email and password.
+- **GET** `/profile/:id_user` → Get profile with progress.
+- **PUT** `/user/:id_user/password` → Update password.
+- **DELETE** `/user/:id_user` → Delete user.
 
 #### 🍽️ Recipes
 
-**GET** `/recipes` → List all recipes
-**GET** `/recipe/:id` → Get details of a prescription
+- **GET** `/recipes` → List all recipes.
+- **GET** `/recipe/:id` → Get details of a prescription.
 
 ---
 
@@ -122,7 +122,7 @@ Server available by default in: http://localhost:3000
 	- Make sure the PostgreSQL service is up and the port is accessible (default 6543).
     - If you are using Supabase or a remote server, check that SSL is enabled. (ssl: { rejectUnauthorized: false }).
 	- Create the base manually if it doesn't exist.
-    
+
 - MongoDB Connection Error:
   - Verify that the variable `DB_MONGO` is correctly set in your `.env`.
   - If using **MongoDB Atlas**, make sure your IP address is whitelisted in the **Network Access** panel.

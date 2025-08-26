@@ -168,7 +168,7 @@ app.get('/profile/:id_user', async (req, res) => {
     try {
         // Check user progress in Postgres
         const { rows: progress } = await db.query(
-            'SELECT id_recipe, status FROM user_progress WHERE id_user = $1',[id_user]
+            'SELECT id_recipe, status FROM user_progress WHERE id_user = $1', [id_user]
         );
 
         if (progress.length === 0) {
@@ -206,3 +206,101 @@ app.get('/profile/:id_user', async (req, res) => {
         res.status(500).json({ error: 'Internal server error' });
     }
 });
+
+// Initialize user progress with ingredients from Mongo
+app.post('/progress/:id_user/:id_recipe/start', async (req, res) => {
+    const { id_user, id_recipe } = req.params;
+
+    try {
+        // 1. Verificar si ya existe progreso
+        const { rows: existing } = await db.query(
+            `SELECT id_progress FROM user_progress WHERE id_user = $1 AND id_recipe = $2`,
+            [id_user, id_recipe]
+        );
+
+        let id_progress;
+        if (existing.length === 0) {
+            // If there is no progress, we create it
+            const { rows } = await db.query(
+                `INSERT INTO user_progress (id_user, id_recipe, status)
+                 VALUES ($1, $2, 'in_progress') RETURNING id_progress`, [id_user, id_recipe]
+            );
+            id_progress = rows[0].id_progress;
+        } else {
+            id_progress = existing[0].id_progress;
+        }
+
+        // Get ingredients from Mongo
+        await dbConnection();
+        const recipesCollection = mongoose.connection.db.collection('recipes');
+        const recipe = await recipesCollection.findOne({ _id: new ObjectId(id_recipe) });
+
+        if (!recipe) {
+            return res.status(404).json({ message: "Recipe not found in Mongo" });
+        }
+
+        // Insert ingredients into Postgres (if they aren't already)
+        for (const ing of recipe.ingredients) {
+            await db.query(
+                `INSERT INTO user_progress_ingredients (id_progress, ingredient_name, is_done)
+                 VALUES ($1, $2, false)
+                 ON CONFLICT DO NOTHING`, // in case it already exists
+                [id_progress, ing.name]
+            );
+        }
+
+        res.json({
+            message: "Progress initialized successfully",
+            id_progress,
+            ingredients: recipe.ingredients.map(i => ({ name: i.name, is_done: false }))
+        });
+
+    } catch (err) {
+        console.error("Error initializing progress:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+
+
+// Update ingredients progress
+app.put('/progress/:id_user/:id_recipe/ingredient', async (req, res) => {
+    const { id_user, id_recipe } = req.params;
+    const { ingredient_name, is_done } = req.body;
+
+    try {
+        // Find that user's progress for that recipe
+        const { rows } = await db.query(
+            `SELECT id_progress FROM user_progress WHERE id_user = $1 AND id_recipe = $2`,
+            [id_user, id_recipe]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: "No progress found for this recipe/user" });
+        }
+
+        const id_progress = rows[0].id_progress;
+
+        // Update ingredient status
+        const updateRes = await db.query(
+            `UPDATE user_progress_ingredients SET is_done = $1
+             WHERE id_progress = $2 AND ingredient_name = $3
+             RETURNING *`,
+            [is_done, id_progress, ingredient_name]
+        );
+
+        if (updateRes.rowCount === 0) {
+            return res.status(404).json({ message: "Ingredient not found for this progress" });
+        }
+
+        res.json({
+            message: "Ingredient updated successfully",
+            ingredient: updateRes.rows[0]
+        });
+
+    } catch (err) {
+        console.error("Error updating ingredient progress:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+

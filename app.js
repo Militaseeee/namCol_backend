@@ -4,6 +4,8 @@ import mongoose from "mongoose";
 import bcrypt from 'bcrypt';
 import {dbConnection} from "./config/dbMongo.js"
 import { ObjectId } from "mongodb"; // Import ObjectId from MongoDB on startup
+import { sendResetEmail } from "./services/mailer.js";
+import crypto from "crypto";
 
 // ================================
 //     --- POSTGRES QUERIES ---
@@ -310,12 +312,11 @@ app.post("/forgot-password", async (req, res) => {
 
     try {
         // Buscar usuario
-        const userRes = await db.query("SELECT id_user FROM users WHERE email = $1", [email]);
-        if (userRes.rows.length === 0) {
-            return res.status(404).json({ message: "User not found" });
+        const userRes = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+        if (userRes.rowCount === 0) {
+            return res.status(404).json({ error: "Usuario no encontrado" });
         }
-
-        const userId = userRes.rows[0].id_user;
+        const user = userRes.rows[0];
 
         // Generar token único (32 bytes en hex)
         const token = crypto.randomBytes(32).toString("hex");
@@ -324,14 +325,13 @@ app.post("/forgot-password", async (req, res) => {
         // Guardar token
         await db.query(
             "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
-            [userId, token, expiresAt]
+            [user.id_user, token, expiresAt]
         );
 
-        // Aquí deberías enviar el email con el link
-        const resetLink = `http://localhost:3000/reset-password?token=${token}`;
-        console.log("Password reset link:", resetLink);
+        // enviar correo con link al FRONTEND
+        await sendResetEmail(user.email, token);
 
-        res.json({ message: "Password reset link sent to email" });
+        res.json({ message: "Correo enviado con las instrucciones" });
     } catch (err) {
         console.error("Error in forgot-password:", err);
         res.status(500).json({ message: "Server error" });

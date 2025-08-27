@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import bcrypt from 'bcrypt';
 import {dbConnection} from "./config/dbMongo.js"
 import { ObjectId } from "mongodb"; // Import ObjectId from MongoDB on startup
+import { sendResetEmail } from "./services/mailer.js";
 import crypto from "crypto";
 
 // ================================
@@ -169,7 +170,7 @@ app.get('/profile/:id_user', async (req, res) => {
     try {
         // Check user progress in Postgres
         const { rows: progress } = await db.query(
-            'SELECT id_recipe, status FROM user_progress WHERE id_user = $1',[id_user]
+            'SELECT id_recipe, status FROM user_progress WHERE id_user = $1', [id_user]
         );
 
         if (progress.length === 0) {
@@ -205,5 +206,169 @@ app.get('/profile/:id_user', async (req, res) => {
     } catch (err) {
         console.error(' Error loading profile:', err);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Initialize user progress with ingredients from Mongo
+app.post('/progress/:id_user/:id_recipe/start', async (req, res) => {
+    const { id_user, id_recipe } = req.params;
+
+    try {
+        // 1. Verificar si ya existe progreso
+        const { rows: existing } = await db.query(
+            `SELECT id_progress FROM user_progress WHERE id_user = $1 AND id_recipe = $2`,
+            [id_user, id_recipe]
+        );
+
+        let id_progress;
+        if (existing.length === 0) {
+            // If there is no progress, we create it
+            const { rows } = await db.query(
+                `INSERT INTO user_progress (id_user, id_recipe, status)
+                 VALUES ($1, $2, 'in_progress') RETURNING id_progress`, [id_user, id_recipe]
+            );
+            id_progress = rows[0].id_progress;
+        } else {
+            id_progress = existing[0].id_progress;
+        }
+
+        // Get ingredients from Mongo
+        await dbConnection();
+        const recipesCollection = mongoose.connection.db.collection('recipes');
+        const recipe = await recipesCollection.findOne({ _id: new ObjectId(id_recipe) });
+
+        if (!recipe) {
+            return res.status(404).json({ message: "Recipe not found in Mongo" });
+        }
+
+        // Insert ingredients into Postgres (if they aren't already)
+        for (const ing of recipe.ingredients) {
+            await db.query(
+                `INSERT INTO user_progress_ingredients (id_progress, ingredient_name, is_done)
+                 VALUES ($1, $2, false)
+                 ON CONFLICT DO NOTHING`, // in case it already exists
+                [id_progress, ing.name]
+            );
+        }
+
+        res.json({
+            message: "Progress initialized successfully",
+            id_progress,
+            ingredients: recipe.ingredients.map(i => ({ name: i.name, is_done: false }))
+        });
+
+    } catch (err) {
+        console.error("Error initializing progress:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+
+
+// Update ingredients progress
+app.put('/progress/:id_user/:id_recipe/ingredient', async (req, res) => {
+    const { id_user, id_recipe } = req.params;
+    const { ingredient_name, is_done } = req.body;
+
+    try {
+        // Find that user's progress for that recipe
+        const { rows } = await db.query(
+            `SELECT id_progress FROM user_progress WHERE id_user = $1 AND id_recipe = $2`,
+            [id_user, id_recipe]
+        );
+
+        if (rows.length === 0) {
+            return res.status(404).json({ message: "No progress found for this recipe/user" });
+        }
+
+        const id_progress = rows[0].id_progress;
+
+        // Update ingredient status
+        const updateRes = await db.query(
+            `UPDATE user_progress_ingredients SET is_done = $1
+             WHERE id_progress = $2 AND ingredient_name = $3
+             RETURNING *`,
+            [is_done, id_progress, ingredient_name]
+        );
+
+        if (updateRes.rowCount === 0) {
+            return res.status(404).json({ message: "Ingredient not found for this progress" });
+        }
+
+        res.json({
+            message: "Ingredient updated successfully",
+            ingredient: updateRes.rows[0]
+        });
+
+    } catch (err) {
+        console.error("Error updating ingredient progress:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});
+
+// Forgot password - genera token y lo guarda
+app.post("/forgot-password", async (req, res) => {
+    const { email } = req.body;
+
+    try {
+        // Buscar usuario
+        const userRes = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+        if (userRes.rowCount === 0) {
+            return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+        const user = userRes.rows[0];
+
+        // Generar token único (32 bytes en hex)
+        const token = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // expira en 15 min
+
+        // Guardar token
+        await db.query(
+            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
+            [user.id_user, token, expiresAt]
+        );
+
+        // enviar correo con link al FRONTEND
+        await sendResetEmail(user.email, token);
+
+        res.json({ message: "Correo enviado con las instrucciones" });
+    } catch (err) {
+        console.error("Error in forgot-password:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// Reset password - valida token y actualiza contraseña
+app.post("/reset-password", async (req, res) => {
+    const { token, newPassword } = req.body;
+    try {
+        // Buscar token válido
+        const tokenRes = await db.query(
+            "SELECT * FROM public.password_reset_tokens WHERE token = $1 AND expires_at > NOW()",
+            [token]
+        );
+
+        if (tokenRes.rows.length === 0) {
+            return res.status(400).json({ message: "Invalid or expired token" });
+        }
+
+        const userId = tokenRes.rows[0].user_id;
+
+        // Hashear nueva contraseña
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        // Actualizar user
+        await db.query("UPDATE users SET password = $1 WHERE id_user = $2", [
+            hashedPassword,
+            userId,
+        ]);
+
+        // Eliminar token (ya usado)
+        await db.query("DELETE FROM password_reset_tokens WHERE token = $1", [token]);
+
+        res.json({ message: "Password updated successfully" });
+    } catch (err) {
+        console.error("Error in reset-password:", err);
+        res.status(500).json({ message: "Server error" });
     }
 });

@@ -5,7 +5,7 @@ It provides the REST API that supports the frontend application, enabling users 
 
 ## 📁 Project Structure
 ```
-namCol_frontend/
+namCol_backend/
 ├── config/
 │   ├── db.js
 │   ├── dbMongo.js

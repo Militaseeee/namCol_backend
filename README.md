@@ -125,14 +125,14 @@ Server available by default in: http://localhost:3000
 
 Tables and relationships:
 
-- users
+- **users**
 	- id_usuario (PK, SERIAL)
 	- name (VARCHAR(100), NOT NULL)
 	- email (VARCHAR(100), UNIQUE, NOT NULL)
 	- password (VARCHAR(255), NOT NULL)
   - country (VARCHAR(150))
 
-- user_progress
+- **user_progress**
 	- id_progress (PK, SERIAL)
 	- id_user (FK → users.id_user, INT, NOT NULL)
   - id_recipe (VARCHAR(50), NOT NULL) — referencia al _id de MongoDB
@@ -140,12 +140,17 @@ Tables and relationships:
   - started_at (TIMESTAMP, DEFAULT NOW())
   - completed_at (TIMESTAMP)
 
-- user_progress_ingredients
+- **user_progress_ingredients**
 	- id_ingredients (PK, SERIAL)
 	- id_progress (FK → user_progress.id_progress, INT, NOT NULL)
 	- ingredient_name (VARCHAR(100), NOT NULL)
 	- is_done (BOOLEAN, DEFAULT false)
 
+- **password_reset_tokens**
+  - id (PK, SERIAL)
+  - user_id (FK → users.id_usuario, INT, NOT NULL, ON DELETE CASCADE)
+  - token (VARCHAR(255), NOT NULL)
+  - expires_at (TIMESTAMPTZ, NOT NULL)
 
 #### MongoDB (NoSQL Data)
 

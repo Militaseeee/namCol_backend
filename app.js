@@ -142,6 +142,73 @@ app.delete('/user/:id_user', async (req, res) => {
     }
 });
 
+// Forgot password - generates token and saves it
+app.post("/forgot-password", async (req, res) => {
+    const { email } = req.body;
+
+    try {
+        // Search user
+        const userRes = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+        if (userRes.rowCount === 0) {
+            return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+        const user = userRes.rows[0];
+
+        // Generate unique token (32 bytes in hex)
+        const token = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // expires in 15 min
+
+        // Save token
+        await db.query(
+            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
+            [user.id_user, token, expiresAt]
+        );
+
+        // send email with link to FRONTEND
+        await sendResetEmail(user.email, token);
+
+        res.json({ message: "Correo enviado con las instrucciones" });
+    } catch (err) {
+        console.error("Error in forgot-password:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// Reset password - validate token and update password
+app.post("/reset-password", async (req, res) => {
+    const { token, newPassword } = req.body;
+    try {
+        // Search for valid token
+        const tokenRes = await db.query(
+            "SELECT * FROM public.password_reset_tokens WHERE token = $1 AND expires_at > NOW()",
+            [token]
+        );
+
+        if (tokenRes.rows.length === 0) {
+            return res.status(400).json({ message: "Invalid or expired token" });
+        }
+
+        const userId = tokenRes.rows[0].user_id;
+
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        // Update user
+        await db.query("UPDATE users SET password = $1 WHERE id_user = $2", [
+            hashedPassword,
+            userId,
+        ]);
+
+        // Delete token (already used)
+        await db.query("DELETE FROM password_reset_tokens WHERE token = $1", [token]);
+
+        res.json({ message: "Password updated successfully" });
+    } catch (err) {
+        console.error("Error in reset-password:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
 // ================================
 //      --- MONGO QUERIES ---
 // ================================
@@ -304,73 +371,6 @@ app.put('/progress/:id_user/:id_recipe/ingredient', async (req, res) => {
     }
 });
 
-// Forgot password - generates token and saves it
-app.post("/forgot-password", async (req, res) => {
-    const { email } = req.body;
-
-    try {
-        // Search user
-        const userRes = await db.query("SELECT * FROM users WHERE email = $1", [email]);
-        if (userRes.rowCount === 0) {
-            return res.status(404).json({ error: "Usuario no encontrado" });
-        }
-        const user = userRes.rows[0];
-
-        // Generate unique token (32 bytes in hex)
-        const token = crypto.randomBytes(32).toString("hex");
-        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // expires in 15 min
-
-        // Save token
-        await db.query(
-            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
-            [user.id_user, token, expiresAt]
-        );
-
-        // send email with link to FRONTEND
-        await sendResetEmail(user.email, token);
-
-        res.json({ message: "Correo enviado con las instrucciones" });
-    } catch (err) {
-        console.error("Error in forgot-password:", err);
-        res.status(500).json({ message: "Server error" });
-    }
-});
-
-// Reset password - validate token and update password
-app.post("/reset-password", async (req, res) => {
-    const { token, newPassword } = req.body;
-    try {
-        // Search for valid token
-        const tokenRes = await db.query(
-            "SELECT * FROM public.password_reset_tokens WHERE token = $1 AND expires_at > NOW()",
-            [token]
-        );
-
-        if (tokenRes.rows.length === 0) {
-            return res.status(400).json({ message: "Invalid or expired token" });
-        }
-
-        const userId = tokenRes.rows[0].user_id;
-
-        // Hash new password
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-        // Update user
-        await db.query("UPDATE users SET password = $1 WHERE id_user = $2", [
-            hashedPassword,
-            userId,
-        ]);
-
-        // Delete token (already used)
-        await db.query("DELETE FROM password_reset_tokens WHERE token = $1", [token]);
-
-        res.json({ message: "Password updated successfully" });
-    } catch (err) {
-        console.error("Error in reset-password:", err);
-        res.status(500).json({ message: "Server error" });
-    }
-});
-
 // Get current progress of a recipe for a user
 app.get('/progress/:id_user/:id_recipe', async (req, res) => {
     const { id_user, id_recipe } = req.params;
@@ -417,6 +417,7 @@ app.get('/progress/:id_user/:id_recipe', async (req, res) => {
                 title: recipe.title,
                 description: recipe.description,
                 image_url: recipe.image_url,
+                steps: recipe.steps  
             },
             id_progress,
             ingredients

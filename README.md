@@ -201,8 +201,6 @@ Each document represents a recipe:
 - **PUT** `/progress/:id_user/:id_recipe/ingredient` → Update ingredient completion
 - **GET** `/progress/:id_user/:id_recipe` →	Get current recipe progress for a user
 - **PUT** `/progress/:id_user/:id_recipe/complete` → Mark recipe progress as completed
-- **GET** `/recipes/top` → Shows the most searched recipes
-- **GET** `/recipes/:id` → It's from the backend that it increases search_count
 
 ---
 

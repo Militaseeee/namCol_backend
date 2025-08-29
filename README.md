@@ -199,6 +199,7 @@ Each document represents a recipe:
 - **POST** `/progress/:id_user/:id_recipe/start` → Initialize recipe progress for user
 - **PUT** `/progress/:id_user/:id_recipe/ingredient` → Update ingredient completion
 - **GET** `/progress/:id_user/:id_recipe` →	Get current recipe progress for a user
+- **PUT** `/progress/:id_user/:id_recipe/complete` → Mark recipe progress as completed
 
 ---
 

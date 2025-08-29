@@ -142,6 +142,73 @@ app.delete('/user/:id_user', async (req, res) => {
     }
 });
 
+// Forgot password - generates token and saves it
+app.post("/forgot-password", async (req, res) => {
+    const { email } = req.body;
+
+    try {
+        // Search user
+        const userRes = await db.query("SELECT * FROM users WHERE email = $1", [email]);
+        if (userRes.rowCount === 0) {
+            return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+        const user = userRes.rows[0];
+
+        // Generate unique token (32 bytes in hex)
+        const token = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // expires in 15 min
+
+        // Save token
+        await db.query(
+            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
+            [user.id_user, token, expiresAt]
+        );
+
+        // send email with link to FRONTEND
+        await sendResetEmail(user.email, token);
+
+        res.json({ message: "Correo enviado con las instrucciones" });
+    } catch (err) {
+        console.error("Error in forgot-password:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
+// Reset password - validate token and update password
+app.post("/reset-password", async (req, res) => {
+    const { token, newPassword } = req.body;
+    try {
+        // Search for valid token
+        const tokenRes = await db.query(
+            "SELECT * FROM public.password_reset_tokens WHERE token = $1 AND expires_at > NOW()",
+            [token]
+        );
+
+        if (tokenRes.rows.length === 0) {
+            return res.status(400).json({ message: "Invalid or expired token" });
+        }
+
+        const userId = tokenRes.rows[0].user_id;
+
+        // Hash new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        // Update user
+        await db.query("UPDATE users SET password = $1 WHERE id_user = $2", [
+            hashedPassword,
+            userId,
+        ]);
+
+        // Delete token (already used)
+        await db.query("DELETE FROM password_reset_tokens WHERE token = $1", [token]);
+
+        res.json({ message: "Password updated successfully" });
+    } catch (err) {
+        console.error("Error in reset-password:", err);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+
 // ================================
 //      --- MONGO QUERIES ---
 // ================================
@@ -214,7 +281,7 @@ app.post('/progress/:id_user/:id_recipe/start', async (req, res) => {
     const { id_user, id_recipe } = req.params;
 
     try {
-        // 1. Verificar si ya existe progreso
+        // Check if there is already progress
         const { rows: existing } = await db.query(
             `SELECT id_progress FROM user_progress WHERE id_user = $1 AND id_recipe = $2`,
             [id_user, id_recipe]
@@ -225,7 +292,7 @@ app.post('/progress/:id_user/:id_recipe/start', async (req, res) => {
             // If there is no progress, we create it
             const { rows } = await db.query(
                 `INSERT INTO user_progress (id_user, id_recipe, status)
-                 VALUES ($1, $2, 'in_progress') RETURNING id_progress`, [id_user, id_recipe]
+                VALUES ($1, $2, 'in_progress') RETURNING id_progress`, [id_user, id_recipe]
             );
             id_progress = rows[0].id_progress;
         } else {
@@ -245,8 +312,8 @@ app.post('/progress/:id_user/:id_recipe/start', async (req, res) => {
         for (const ing of recipe.ingredients) {
             await db.query(
                 `INSERT INTO user_progress_ingredients (id_progress, ingredient_name, is_done)
-                 VALUES ($1, $2, false)
-                 ON CONFLICT DO NOTHING`, // in case it already exists
+                VALUES ($1, $2, false)
+                ON CONFLICT DO NOTHING`, // in case it already exists
                 [id_progress, ing.name]
             );
         }
@@ -262,8 +329,6 @@ app.post('/progress/:id_user/:id_recipe/start', async (req, res) => {
         res.status(500).json({ error: "Internal server error" });
     }
 });
-
-
 
 // Update ingredients progress
 app.put('/progress/:id_user/:id_recipe/ingredient', async (req, res) => {
@@ -286,8 +351,8 @@ app.put('/progress/:id_user/:id_recipe/ingredient', async (req, res) => {
         // Update ingredient status
         const updateRes = await db.query(
             `UPDATE user_progress_ingredients SET is_done = $1
-             WHERE id_progress = $2 AND ingredient_name = $3
-             RETURNING *`,
+            WHERE id_progress = $2 AND ingredient_name = $3
+            RETURNING *`,
             [is_done, id_progress, ingredient_name]
         );
 
@@ -306,69 +371,87 @@ app.put('/progress/:id_user/:id_recipe/ingredient', async (req, res) => {
     }
 });
 
-// Forgot password - genera token y lo guarda
-app.post("/forgot-password", async (req, res) => {
-    const { email } = req.body;
+// Get current progress of a recipe for a user
+app.get('/progress/:id_user/:id_recipe', async (req, res) => {
+    const { id_user, id_recipe } = req.params;
 
     try {
-        // Buscar usuario
-        const userRes = await db.query("SELECT * FROM users WHERE email = $1", [email]);
-        if (userRes.rowCount === 0) {
-            return res.status(404).json({ error: "Usuario no encontrado" });
-        }
-        const user = userRes.rows[0];
-
-        // Generar token único (32 bytes en hex)
-        const token = crypto.randomBytes(32).toString("hex");
-        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // expira en 15 min
-
-        // Guardar token
-        await db.query(
-            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)",
-            [user.id_user, token, expiresAt]
+        // Search progress in Postgres
+        const { rows: progressRows } = await db.query(
+            `SELECT up.id_progress, upi.ingredient_name, upi.is_done
+            FROM user_progress up
+            JOIN user_progress_ingredients upi ON up.id_progress = upi.id_progress
+            WHERE up.id_user = $1 AND up.id_recipe = $2`,
+            [id_user, id_recipe]
         );
 
-        // enviar correo con link al FRONTEND
-        await sendResetEmail(user.email, token);
+        if (progressRows.length === 0) {
+            return res.status(404).json({ message: "No progress found for this user/recipe" });
+        }
 
-        res.json({ message: "Correo enviado con las instrucciones" });
+        const id_progress = progressRows[0].id_progress;
+
+        // Get the recipe from Mongo
+        await dbConnection();
+        const recipesCollection = mongoose.connection.db.collection('recipes');
+        const recipe = await recipesCollection.findOne({ _id: new ObjectId(id_recipe) });
+
+        if (!recipe) {
+            return res.status(404).json({ message: "Recipe not found in Mongo" });
+        }
+
+        // Combining Mongo ingredients with SQL progress
+        const ingredients = recipe.ingredients.map(ing => {
+            const found = progressRows.find(p => p.ingredient_name === ing.name);
+            return {
+                name: ing.name,
+                quantity: ing.quantity,
+                is_done: found ? found.is_done : false
+            };
+        });
+
+        // Answer
+        res.json({
+            recipe: {
+                _id: recipe._id,
+                title: recipe.title,
+                description: recipe.description,
+                image_url: recipe.image_url,
+                steps: recipe.steps  
+            },
+            id_progress,
+            ingredients
+        });
+
     } catch (err) {
-        console.error("Error in forgot-password:", err);
-        res.status(500).json({ message: "Server error" });
+        console.error("Error fetching progress:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });
 
-// Reset password - valida token y actualiza contraseña
-app.post("/reset-password", async (req, res) => {
-    const { token, newPassword } = req.body;
+// Mark recipe progress as completed
+app.put('/progress/:id_user/:id_recipe/complete', async (req, res) => {
+    const { id_user, id_recipe } = req.params;
+
     try {
-        // Buscar token válido
-        const tokenRes = await db.query(
-            "SELECT * FROM public.password_reset_tokens WHERE token = $1 AND expires_at > NOW()",
-            [token]
+        const result = await db.query(
+            `UPDATE user_progress 
+            SET status = 'completed', completed_at = NOW()
+            WHERE id_user = $1 AND id_recipe = $2
+            RETURNING *`,
+            [id_user, id_recipe]
         );
 
-        if (tokenRes.rows.length === 0) {
-            return res.status(400).json({ message: "Invalid or expired token" });
+        if (result.rowCount === 0) {
+            return res.status(404).json({ message: "No progress found for this recipe/user" });
         }
 
-        const userId = tokenRes.rows[0].user_id;
-
-        // Hashear nueva contraseña
-        const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-        // Actualizar user
-        await db.query("UPDATE users SET password = $1 WHERE id_user = $2", [
-            hashedPassword,
-            userId,
-        ]);
-
-        // Eliminar token (ya usado)
-        await db.query("DELETE FROM password_reset_tokens WHERE token = $1", [token]);
-
-        res.json({ message: "Password updated successfully" });
+        res.json({
+            message: "Recipe marked as completed",
+            progress: result.rows[0]
+        });
     } catch (err) {
-        console.error("Error in reset-password:", err);
-        res.status(500).json({ message: "Server error" });
+        console.error("Error completing recipe:", err);
+        res.status(500).json({ error: "Internal server error" });
     }
 });

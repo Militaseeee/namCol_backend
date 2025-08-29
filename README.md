@@ -113,7 +113,7 @@ FRONTEND_URL=http://localhost:5173/
 node app.js
 ```
 
-Server available by default in: http://localhost:3000
+Server available in: https://nam-col-backend.vercel.app
 
 ---
 
@@ -173,7 +173,8 @@ Each document represents a recipe:
     { "step_number": 1, "instruction": "Cook the red beans until soft..." },
     { "step_number": 2, "instruction": "Prepare the white rice..." }
   ],
-  "image_url": "bandeja.jpg"
+  "image_url": "bandeja.jpg",
+  "search_count": 0  
 }
 
 ```
@@ -200,6 +201,8 @@ Each document represents a recipe:
 - **PUT** `/progress/:id_user/:id_recipe/ingredient` → Update ingredient completion
 - **GET** `/progress/:id_user/:id_recipe` →	Get current recipe progress for a user
 - **PUT** `/progress/:id_user/:id_recipe/complete` → Mark recipe progress as completed
+- **GET** `/recipes/top` → Shows the most searched recipes
+- **GET** `/recipes/:id` → It's from the backend that it increases search_count
 
 ---
 

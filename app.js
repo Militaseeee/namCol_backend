@@ -150,7 +150,7 @@ app.post("/forgot-password", async (req, res) => {
         // Search user
         const userRes = await db.query("SELECT * FROM users WHERE email = $1", [email]);
         if (userRes.rowCount === 0) {
-            return res.status(404).json({ error: "Usuario no encontrado" });
+            return res.status(404).json({ error: "User not found" });
         }
         const user = userRes.rows[0];
 
@@ -167,7 +167,7 @@ app.post("/forgot-password", async (req, res) => {
         // send email with link to FRONTEND
         await sendResetEmail(user.email, token);
 
-        res.json({ message: "Correo enviado con las instrucciones" });
+        res.json({ message: "Email sent with instructions" });
     } catch (err) {
         console.error("Error in forgot-password:", err);
         res.status(500).json({ message: "Server error" });
@@ -454,4 +454,49 @@ app.put('/progress/:id_user/:id_recipe/complete', async (req, res) => {
         console.error("Error completing recipe:", err);
         res.status(500).json({ error: "Internal server error" });
     }
+});
+
+// Get top 3 recipes
+app.get('/recipes/top', async (req, res) => {
+  try {
+    await dbConnection();
+    const recipesCollection = mongoose.connection.db.collection('recipes');
+
+    const topRecipes = await recipesCollection
+      .find({})
+      .sort({ search_count: -1 }) // sort by descending popularity
+      .limit(3)
+      .toArray();
+
+    res.status(200).json(topRecipes);
+  } catch (err) {
+    console.error("Error fetching top recipes:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Get single recipe and increment search_count
+app.get('/recipes/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    await dbConnection();
+    const recipesCollection = mongoose.connection.db.collection('recipes');
+
+    // Increment search_count (+1) and return the recipe
+    const recipe = await recipesCollection.findOneAndUpdate(
+      { _id: new ObjectId(id) },
+      { $inc: { search_count: 1 } }, // Increment counter
+      { returnDocument: "after" } // Returns the already updated recipe
+    );
+
+    if (!recipe.value) {
+      return res.status(404).json({ message: "Recipe not found" });
+    }
+
+    res.json(recipe.value);
+  } catch (err) {
+    console.error("Error fetching recipe:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
 });

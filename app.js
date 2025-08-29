@@ -428,3 +428,30 @@ app.get('/progress/:id_user/:id_recipe', async (req, res) => {
         res.status(500).json({ error: "Internal server error" });
     }
 });
+
+// Mark recipe progress as completed
+app.put('/progress/:id_user/:id_recipe/complete', async (req, res) => {
+    const { id_user, id_recipe } = req.params;
+
+    try {
+        const result = await db.query(
+            `UPDATE user_progress 
+            SET status = 'completed', completed_at = NOW()
+            WHERE id_user = $1 AND id_recipe = $2
+            RETURNING *`,
+            [id_user, id_recipe]
+        );
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ message: "No progress found for this recipe/user" });
+        }
+
+        res.json({
+            message: "Recipe marked as completed",
+            progress: result.rows[0]
+        });
+    } catch (err) {
+        console.error("Error completing recipe:", err);
+        res.status(500).json({ error: "Internal server error" });
+    }
+});

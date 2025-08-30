@@ -1,4 +1,5 @@
-# namCol_backend
+<img width="300" alt="Logo" src="https://github.com/user-attachments/assets/71ee6e82-c628-47ec-9052-b988660c46e8" />
+
 
 This repository contains the backend development for ÑamCol, an interactive platform designed to promote Colombian gastronomy.
 It provides the REST API that supports the frontend application, enabling users to explore, learn, and prepare traditional Colombian recipes.
